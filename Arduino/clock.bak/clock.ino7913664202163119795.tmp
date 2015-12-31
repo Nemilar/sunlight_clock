@@ -1,0 +1,183 @@
+
+// clock_ledmatrix includes
+#include <Adafruit_GFX.h>   // Core graphics library
+#include <RGBmatrixPanel.h> // Hardware-specific library
+
+// light_calculation includes
+#include <math.h>
+#define SUNRISE 1
+#define SUNSET 2
+#define NEVERSETS -999
+#define NEVERRISES -998
+
+/* RTC includes
+#include <Time.h>
+#include <Wire.h>
+#include <DS3232RTC.h>
+*/
+
+// For the funsies 
+#include <Arduino.h>
+
+
+
+
+struct LED {
+    int latitude;
+    int longitude;
+    float sunriseTime;
+    float sunsetTime;
+    int localOffset;
+};
+
+
+int freeRam () 
+{
+  extern int __heap_start, *__brkval; 
+  int v; 
+  return (int) &v - (__brkval == 0 ? (int) &__heap_start : (int) __brkval); 
+}
+
+void slowPrintFreeRam()
+{
+  delay(500);
+  Serial.println(freeRam());
+  delay(500);
+}
+
+void setup() {
+  Serial.begin(9600);
+  Serial.println("Booting.");
+  initMatrix();
+  matrixBootupTest(5);
+  delay(2500);
+  Serial.println("Init test complete.  Free memory=");
+  slowPrintFreeRam();
+  delay(2500);
+}
+
+void loop() {
+    Serial.println("Start loop.");
+    int jWidth=32;
+    int  jHeight=16;
+    int localOffset=0;
+    float thisLat, thisLong, thisSunsetTime, thisSunriseTime;
+    LED map[jWidth][jHeight];
+
+    Serial.println("Calculating Rows");
+    for (byte h=0;h<jHeight;h++)
+    {
+        thisLat = ((90-(h*(5.625*2))));
+        for (byte w=0;w<jWidth;w++)
+        {
+            thisLong = ((-180+(w*11.25)));
+            map[h][w].latitude = thisLat;
+            map[h][w].longitude = thisLong;
+
+            if (w < 15.5)
+            {
+                localOffset = float(-12) + ((float(w)/float(15.0)) * float(12.0));
+            }
+            else
+            {
+                localOffset = float(0) + floor(((float(w-15)/float(15)) * float(12)));
+            }
+
+            thisSunriseTime = calculateSuntime(2015,12,21,thisLat,thisLong,localOffset,0,SUNRISE);
+            thisSunsetTime = calculateSuntime(2015,12,21,thisLat,thisLong,localOffset,0,SUNSET);
+
+            if (thisSunriseTime != NEVERRISES)
+            {
+                map[h][w].sunriseTime = fmod(24 + thisSunriseTime, 24.0);
+            }
+            else
+            {
+                map[h][w].sunriseTime = NEVERRISES;
+
+            }
+
+            if (thisSunsetTime != NEVERSETS)
+            {
+                map[h][w].sunsetTime = fmod(24 + calculateSuntime(2015,12,21,thisLat,thisLong,localOffset,0,SUNSET), 24.0);
+            }
+            else
+            {
+                map[h][w].sunsetTime = NEVERSETS;
+            }
+
+            map[h][w].localOffset = localOffset;
+            
+            
+            /* Debug stuff */
+            Serial.println("-----");
+            Serial.print("h=");
+            Serial.print(h);
+            Serial.print(" | w=");
+            Serial.print(w);
+            Serial.print("\nlat=");
+            Serial.print(thisLat);
+            Serial.print(" | long=");
+            Serial.print(thisLong);
+            Serial.print("\nsunrise=");
+            Serial.print(map[h][w].sunriseTime);
+            Serial.print(" | sunset=");
+            Serial.print(map[h][w].sunsetTime);
+            Serial.print("\nlocaloffset=");
+            Serial.print(localOffset);  
+            Serial.print("\nState=");        
+       //     printf("For h=%d and w=%d, lat=%f and long=%f, computed sunrise=%f and sunset=%f with localOffset %d\n", h, w, thisLat, thisLong, map[h][w].sunriseTime, map[h][w].sunsetTime, localOffset);
+        }
+
+    }
+
+    float currentTimeGMT = 17.75;
+    float currentLocalTime;
+
+    for (int h=0;h<jHeight;h++)
+    {
+//      printf("On row %d\n", h);
+        for (int w=0;w<jWidth;w++)
+        {
+
+            if (map[h][w].sunriseTime == NEVERRISES)
+            {
+                setNighttime(h, w);
+                Serial.print("off\n");
+                continue;
+            }
+            else if (map[h][w].sunsetTime == NEVERSETS)
+            {
+                setDaylight(h, w);
+                  Serial.print("on\n");
+                continue;
+            }
+
+            currentLocalTime = currentTimeGMT + map[h][w].localOffset;
+            if (currentLocalTime < 0)
+            {
+                currentLocalTime+=24;
+            }
+            else if (currentLocalTime > 24)
+            {
+                currentLocalTime-=24;
+            }
+//          printf("For h=%d and w=%d, lat=%f and long=%f, computed sunrise=%f and sunset=%f with localOffset %d and localtime %f\n", h, w, map[h][w].latitude, map[h][w].longitude, map[h][w].sunriseTime, map[h][w].sunsetTime, map[h][w].localOffset, currentLocalTime);
+//          printf("%f", currentLocalTime);
+            if ((currentLocalTime >= map[h][w].sunriseTime) && (currentLocalTime <= map[h][w].sunsetTime))
+            {
+                setDaylight(h, w);
+                Serial.print("on\n");
+
+            }
+            else
+            {
+                setNighttime(h, w);
+                Serial.print("off\n");
+
+            }
+
+        }
+
+    }
+
+}
